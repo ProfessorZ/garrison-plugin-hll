@@ -1,0 +1,15 @@
+{
+  "id": "hll",
+  "name": "garrison-plugin-hll",
+  "version": "1.0.0",
+  "display_name": "Hell Let Loose",
+  "description": "RCON plugin for Hell Let Loose dedicated servers",
+  "author": "Garrison",
+  "repo": "https://github.com/ProfessorZ/garrison-plugin-hll",
+  "garrison_api": "1",
+  "default_ports": {
+    "game": 7777,
+    "rcon": 27015
+  },
+  "icon": "⚔️"
+}
