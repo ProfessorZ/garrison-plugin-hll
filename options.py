@@ -1,7 +1,5 @@
 """Hell Let Loose server options handler."""
 
-import json
-
 from app.plugins.base import ServerOption
 
 # Maps HLL setting names to their getter command, setter command, and metadata.
@@ -10,7 +8,6 @@ HLL_OPTIONS = [
         "name": "VoteKickEnabled",
         "getter": "GetVoteKickEnabled",
         "setter": "SetVoteKickEnabled",
-        "content_key": "enabled",
         "type": "boolean",
         "category": "Moderation",
         "description": "Allow players to vote-kick others",
@@ -19,7 +16,6 @@ HLL_OPTIONS = [
         "name": "AutoBalanceEnabled",
         "getter": "GetAutoBalanceEnabled",
         "setter": "SetAutoBalanceEnabled",
-        "content_key": "enabled",
         "type": "boolean",
         "category": "Gameplay",
         "description": "Automatically balance teams",
@@ -28,7 +24,6 @@ HLL_OPTIONS = [
         "name": "AutoBalanceThreshold",
         "getter": "GetAutoBalanceThreshold",
         "setter": "SetAutoBalanceThreshold",
-        "content_key": "threshold",
         "type": "integer",
         "category": "Gameplay",
         "description": "Player difference threshold before auto-balance triggers",
@@ -39,7 +34,6 @@ HLL_OPTIONS = [
         "name": "TeamSwitchCooldown",
         "getter": "GetTeamSwitchCooldown",
         "setter": "SetTeamSwitchCooldown",
-        "content_key": "cooldown",
         "type": "integer",
         "category": "Gameplay",
         "description": "Cooldown in minutes before a player can switch teams again",
@@ -50,7 +44,6 @@ HLL_OPTIONS = [
         "name": "IdleAutokickTime",
         "getter": "GetIdleAutokickTime",
         "setter": "SetIdleAutokickTime",
-        "content_key": "minutes",
         "type": "integer",
         "category": "Server",
         "description": "Minutes of inactivity before a player is kicked (0 = disabled)",
@@ -61,7 +54,6 @@ HLL_OPTIONS = [
         "name": "MaxPingAutokick",
         "getter": "GetMaxPingAutokick",
         "setter": "SetMaxPingAutokick",
-        "content_key": "max_ping",
         "type": "integer",
         "category": "Server",
         "description": "Maximum ping in ms before auto-kick (0 = disabled)",
@@ -72,7 +64,6 @@ HLL_OPTIONS = [
         "name": "HighPingLimit",
         "getter": "GetHighPingLimit",
         "setter": "SetHighPingLimit",
-        "content_key": "limit",
         "type": "integer",
         "category": "Server",
         "description": "High ping warning limit in milliseconds",
@@ -83,7 +74,6 @@ HLL_OPTIONS = [
         "name": "ProfanityFilterEnabled",
         "getter": "GetProfanityFilterEnabled",
         "setter": "SetProfanityFilterEnabled",
-        "content_key": "enabled",
         "type": "boolean",
         "category": "Moderation",
         "description": "Filter profanity in chat messages",
@@ -95,26 +85,17 @@ _OPTIONS_BY_NAME = {opt["name"]: opt for opt in HLL_OPTIONS}
 
 
 async def fetch_options(send_command) -> list[ServerOption]:
-    """Fetch all HLL server options by issuing getter commands."""
+    """Fetch all HLL server options by issuing getter commands.
+
+    HLL RCON returns plain-text values (e.g. "on", "off", "30").
+    """
     options: list[ServerOption] = []
     for opt in HLL_OPTIONS:
         try:
-            raw = await send_command(opt["getter"])
-            data = json.loads(raw) if isinstance(raw, str) else raw
-            content = data.get("contentBody", "")
-            if isinstance(content, str):
-                try:
-                    content = json.loads(content)
-                except (json.JSONDecodeError, TypeError):
-                    pass
-            # Extract value
-            if isinstance(content, dict):
-                value = str(content.get(opt["content_key"], content.get("value", "")))
-            else:
-                value = str(content)
+            value = await send_command(opt["getter"])
             options.append(ServerOption(
                 name=opt["name"],
-                value=value,
+                value=value.strip(),
                 option_type=opt["type"],
                 category=opt["category"],
                 description=opt["description"],
@@ -122,27 +103,20 @@ async def fetch_options(send_command) -> list[ServerOption]:
                 max_val=opt.get("max_val"),
             ))
         except Exception:
-            # Skip options that fail to fetch
             pass
     return options
 
 
 async def set_option(send_command, name: str, value: str) -> str:
-    """Set an HLL server option by name."""
+    """Set an HLL server option by name.
+
+    HLL setter commands take the value as an argument, e.g.:
+        SetAutoBalanceThreshold 3
+    """
     opt = _OPTIONS_BY_NAME.get(name)
     if not opt:
         raise ValueError(f"Unknown HLL option: {name}")
-    # Coerce value to the right type for the JSON content
-    if opt["type"] == "boolean":
-        coerced = value.lower() in ("true", "1", "yes")
-        content = json.dumps({opt["content_key"]: coerced})
-    elif opt["type"] == "integer":
-        content = json.dumps({opt["content_key"]: int(value)})
-    else:
-        content = json.dumps({opt["content_key"]: value})
-    raw = await send_command(f'{opt["setter"]} {content}')
-    data = json.loads(raw) if isinstance(raw, str) else raw
-    status = data.get("statusCode", 0)
-    if status == 200:
+    result = await send_command(opt["setter"], value)
+    if result.upper().startswith("SUCCESS") or result.upper() == "PASS":
         return f"{name} set to {value}"
-    return f"Failed to set {name}: {data.get('statusMessage', 'unknown error')}"
+    return f"Failed to set {name}: {result}"

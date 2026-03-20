@@ -1,32 +1,17 @@
-"""HLL RCON protocol — plain text over TCP with XOR encryption.
+"""HLL RCON protocol: JSON bodies, XOR-encrypted, with binary-framed headers."""
 
-The actual HLL game server RCON protocol:
-1. TCP connect
-2. Server immediately sends XOR key (raw bytes, no framing)
-3. XOR-encrypt ALL subsequent sends and decrypt ALL received bytes
-4. Send: "login <password>\n" → expect "SUCCESS" or "FAIL"
-5. Commands are plain strings, separated by spaces/newlines
-6. Lists are tab-separated: "<count>\\t<item1>\\t<item2>\\t"
-7. Responses are: SUCCESS, FAIL, EMPTY, or a data string
-
-Reference: https://gist.github.com/timraay/5634d85eab552b5dfafb9fd61273dc52
-"""
-
-import array
 import asyncio
+import base64
+import json
 import logging
+import struct
 
 logger = logging.getLogger(__name__)
 
-XOR_KEY_LENGTH = 64  # Key length sent by server on connect
 
-
-class HLLAuthError(Exception):
-    pass
-
-
-class HLLCommandError(Exception):
-    pass
+def _xor(data: bytes, key: bytes) -> bytes:
+    """XOR each byte of *data* with *key* (cycling)."""
+    return bytes(b ^ key[i % len(key)] for i, b in enumerate(data))
 
 
 class HLLConnection:
@@ -36,88 +21,103 @@ class HLLConnection:
         self.host = host
         self.port = port
         self.password = password
-        self._xorkey: bytes | None = None
-        self.reader: asyncio.StreamReader | None = None
-        self.writer: asyncio.StreamWriter | None = None
+        self._reader: asyncio.StreamReader | None = None
+        self._writer: asyncio.StreamWriter | None = None
+        self._xor_key: bytes | None = None
+        self._auth_token: str = ""
+        self._request_id: int = 0
         self._lock = asyncio.Lock()
 
-    async def connect(self) -> None:
-        """Connect, receive XOR key, and authenticate."""
-        self.reader, self.writer = await asyncio.wait_for(
-            asyncio.open_connection(self.host, self.port),
-            timeout=10,
-        )
-        # Step 1: Server sends the XOR key immediately on connect (raw bytes)
-        self._xorkey = await asyncio.wait_for(
-            self.reader.read(XOR_KEY_LENGTH),
-            timeout=5,
-        )
-        logger.debug("HLL XOR key received (%d bytes)", len(self._xorkey))
-
-        # Step 2: Login
-        resp = await self._send("login %s" % self.password)
-        if resp.strip() != "SUCCESS":
-            raise HLLAuthError("HLL login failed (bad password?)")
-        logger.info("HLL RCON authenticated to %s:%d", self.host, self.port)
-
-    async def send(self, command: str) -> str:
-        """Send a command and return the plain text response."""
-        async with self._lock:
-            return await self._send(command)
-
-    async def close(self) -> None:
-        if self.writer:
-            try:
-                self.writer.close()
-                await self.writer.wait_closed()
-            except Exception:
-                pass
-            self.writer = None
-            self.reader = None
-        self._xorkey = None
+    # ── public API ────────────────────────────────────────────────
 
     @property
     def connected(self) -> bool:
-        return self.writer is not None and not self.writer.is_closing()
+        return self._writer is not None and not self._writer.is_closing()
 
-    def _xor(self, data: bytes) -> bytes:
-        """XOR-encrypt/decrypt data with the server key."""
-        if not self._xorkey:
-            return data
-        key = self._xorkey
-        return array.array("B", [data[i] ^ key[i % len(key)] for i in range(len(data))]).tobytes()
+    async def connect(self) -> None:
+        """Connect, handshake for XOR key, and authenticate."""
+        self._reader, self._writer = await asyncio.wait_for(
+            asyncio.open_connection(self.host, self.port),
+            timeout=10,
+        )
 
-    async def _send(self, command: str) -> str:
-        """Internal: send command (already holds lock or is pre-auth)."""
-        payload = self._xor(command.encode("utf-8"))
-        # Prefix with 4-byte little-endian length
-        import struct
-        length_prefix = struct.pack("<I", len(payload))
-        self.writer.write(length_prefix + payload)
-        await self.writer.drain()
-        return await self._receive()
+        # Step 1 — ServerConnect (unencrypted) to get XOR key.
+        resp = await self._send_raw("ServerConnect", "")
+        xor_key_b64 = resp.get("contentBody", "")
+        self._xor_key = base64.b64decode(xor_key_b64)
+        logger.debug("Received XOR key: %s (%d bytes)", self._xor_key.hex(), len(self._xor_key))
 
-    async def _receive(self) -> str:
-        """Read a length-prefixed XOR-encrypted response."""
-        import struct
-        # Read 4-byte length prefix
-        length_bytes = await asyncio.wait_for(self.reader.readexactly(4), timeout=15)
-        length = struct.unpack("<I", length_bytes)[0]
-        # Read the response body
-        raw = await asyncio.wait_for(self.reader.readexactly(length), timeout=15)
-        return self._xor(raw).decode("utf-8", errors="replace")
+        # Step 2 — Login with password (now XOR-encrypted).
+        resp = await self._send_raw("Login", self.password)
+        if resp.get("statusCode") != 200:
+            await self.close()
+            raise ConnectionError(
+                f"HLL authentication failed: {resp.get('statusMessage', 'unknown error')}"
+            )
+        self._auth_token = resp.get("contentBody", "")
+        logger.info("HLL RCON authenticated to %s:%d", self.host, self.port)
 
-    @staticmethod
-    def parse_list(response: str) -> list[str]:
-        """Parse a tab-separated HLL list: '<count>\\t<item1>\\t<item2>\\t'"""
-        if not response or response.strip() in ("EMPTY", "FAIL"):
-            return []
-        parts = response.split("\t")
-        if not parts:
-            return []
+    async def send(self, command: str, content: str | dict = "") -> str:
+        """Send a command and return the contentBody of the response.
+
+        If *content* is a dict it is JSON-encoded before being placed in the
+        request's ``contentBody`` field.
+        """
+        if isinstance(content, dict):
+            content = json.dumps(content)
+        async with self._lock:
+            resp = await self._send_raw(command, content)
+            return resp.get("contentBody", "")
+
+    async def close(self) -> None:
+        """Close the TCP connection."""
+        if self._writer:
+            try:
+                self._writer.close()
+                await self._writer.wait_closed()
+            except Exception:
+                pass
+            self._writer = None
+            self._reader = None
+
+    # ── internals ─────────────────────────────────────────────────
+
+    def _next_id(self) -> int:
+        self._request_id += 1
+        return self._request_id
+
+    async def _send_raw(self, command: str, content: str) -> dict:
+        """Build, send, and receive a single request/response pair."""
+        body_obj = {
+            "authToken": self._auth_token,
+            "version": 2,
+            "name": command,
+            "contentBody": content,
+        }
+        body_bytes = json.dumps(body_obj).encode("utf-8")
+
+        if self._xor_key is not None:
+            body_bytes = _xor(body_bytes, self._xor_key)
+
+        request_id = self._next_id()
+        header = struct.pack("<II", request_id, len(body_bytes))
+        self._writer.write(header + body_bytes)
+        await self._writer.drain()
+
+        return await self._read_response()
+
+    async def _read_response(self) -> dict:
+        """Read one framed response: 8-byte header then body."""
+        header = await asyncio.wait_for(self._reader.readexactly(8), timeout=30)
+        _resp_id, body_len = struct.unpack("<II", header)
+
+        body_bytes = await asyncio.wait_for(self._reader.readexactly(body_len), timeout=30)
+
+        if self._xor_key is not None:
+            body_bytes = _xor(body_bytes, self._xor_key)
+
         try:
-            count = int(parts[0])
-            return [p for p in parts[1:count + 1] if p]
-        except (ValueError, IndexError):
-            # Fallback: just split on tabs and filter empty
-            return [p for p in parts if p.strip()]
+            return json.loads(body_bytes)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            logger.warning("Failed to parse response body: %s", exc)
+            return {"contentBody": body_bytes.decode("utf-8", errors="replace")}

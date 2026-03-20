@@ -1,4 +1,4 @@
-"""Hell Let Loose RCON command schema v1.0.0."""
+"""Hell Let Loose RCON command schema v2.0.0 — GetServerInformation API."""
 
 
 def get_commands():
@@ -6,13 +6,30 @@ def get_commands():
     from app.plugins.base import CommandDef, CommandParam
 
     return [
-        # ── PLAYER MANAGEMENT ─────────────────────────────────────────
+        # ── SERVER INFORMATION ─────────────────────────────────────────
         CommandDef(
-            name="GetPlayerIds",
-            description="List connected players with Steam IDs",
-            category="PLAYER_MGMT",
-            example="GetPlayerIds",
+            name="GetServerInformation",
+            description="Query server information by Name parameter (session, players, slots, etc.)",
+            category="SERVER",
+            params=[
+                CommandParam(
+                    name="Name",
+                    type="string",
+                    description="Information type: session, players, slots",
+                    choices=["session", "players", "slots"],
+                ),
+                CommandParam(
+                    name="Value",
+                    type="string",
+                    required=False,
+                    description="Optional value filter (usually empty string)",
+                    default="",
+                ),
+            ],
+            example='GetServerInformation {"Name": "session", "Value": ""}',
         ),
+
+        # ── PLAYER MANAGEMENT ─────────────────────────────────────────
         CommandDef(
             name="KickPlayerById",
             description="Kick a player by Steam ID",
@@ -90,44 +107,6 @@ def get_commands():
             ],
             admin_only=True,
             example='RemoveAdminById {"player_id": "76561198..."}',
-        ),
-
-        # ── SERVER INFO ───────────────────────────────────────────────
-        CommandDef(
-            name="GetServerName",
-            description="Get the server name",
-            category="SERVER",
-            example="GetServerName",
-        ),
-        CommandDef(
-            name="GetSlots",
-            description="Get current and max player count",
-            category="SERVER",
-            example="GetSlots",
-        ),
-        CommandDef(
-            name="GetGameState",
-            description="Get current game state (map, score, time)",
-            category="SERVER",
-            example="GetGameState",
-        ),
-        CommandDef(
-            name="GetCurrentMap",
-            description="Get the current map name",
-            category="SERVER",
-            example="GetCurrentMap",
-        ),
-        CommandDef(
-            name="GetNextMap",
-            description="Get the next map in rotation",
-            category="SERVER",
-            example="GetNextMap",
-        ),
-        CommandDef(
-            name="GetMapRotation",
-            description="Get the full map rotation list",
-            category="SERVER",
-            example="GetMapRotation",
         ),
 
         # ── MAP MANAGEMENT ────────────────────────────────────────────
