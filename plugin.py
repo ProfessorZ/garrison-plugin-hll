@@ -292,8 +292,18 @@ class HLLPlugin(GamePlugin):
     # "[3:01 min (1774199517)] CHAT[Team]..." -> "CHAT[Team]..."
     _RE_LOG_PREFIX = re.compile(r"^\[(?:\d+:\d{2} min|\d+(?:\.\d+)? sec) \(\d+\)\] ")
 
+    _RE_LOG_EPOCH = re.compile(r"^\[(?:\d+:\d{2} min|\d+(?:\.\d+)? sec) \((\d+)\)\] ")
+
     def _parse_log_line(self, line: str, now: datetime) -> dict | None:
-        # Strip the time prefix added by GetAdminLog
+        # Extract real timestamp from epoch in prefix, then strip prefix
+        epoch_match = self._RE_LOG_EPOCH.match(line)
+        if epoch_match:
+            try:
+                event_time = datetime.fromtimestamp(int(epoch_match.group(1)), tz=timezone.utc)
+            except (ValueError, OSError):
+                event_time = now
+        else:
+            event_time = now
         line = self._RE_LOG_PREFIX.sub("", line).strip()
         if not line:
             return None
@@ -308,7 +318,7 @@ class HLLPlugin(GamePlugin):
             is_tk = line.startswith("TEAM KILL")
             return {
                 "event_type": "teamkill" if is_tk else "kill",
-                "timestamp": now.isoformat(),
+                "timestamp": event_time.isoformat(),
                 "player_name": m.group(1).strip(),
                 "player_id": m.group(3),
                 "target_name": m.group(4).strip(),
@@ -322,7 +332,7 @@ class HLLPlugin(GamePlugin):
         if m:
             return {
                 "event_type": "chat",
-                "timestamp": now.isoformat(),
+                "timestamp": event_time.isoformat(),
                 "player_name": m.group(2).strip(),
                 "player_id": m.group(4),
                 "message": m.group(5).strip(),
@@ -334,7 +344,7 @@ class HLLPlugin(GamePlugin):
         if m:
             return {
                 "event_type": "connect",
-                "timestamp": now.isoformat(),
+                "timestamp": event_time.isoformat(),
                 "player_name": m.group(1).strip(),
                 "player_id": m.group(2),
                 "raw": line,
@@ -345,7 +355,7 @@ class HLLPlugin(GamePlugin):
         if m:
             return {
                 "event_type": "disconnect",
-                "timestamp": now.isoformat(),
+                "timestamp": event_time.isoformat(),
                 "player_name": m.group(1).strip(),
                 "player_id": m.group(2),
                 "raw": line,
@@ -356,7 +366,7 @@ class HLLPlugin(GamePlugin):
         if m:
             return {
                 "event_type": "kick",
-                "timestamp": now.isoformat(),
+                "timestamp": event_time.isoformat(),
                 "player_name": m.group(1).strip(),
                 "message": m.group(2).strip() if m.group(2) else None,
                 "raw": line,
@@ -367,7 +377,7 @@ class HLLPlugin(GamePlugin):
         if m:
             return {
                 "event_type": "ban",
-                "timestamp": now.isoformat(),
+                "timestamp": event_time.isoformat(),
                 "player_name": m.group(1).strip(),
                 "raw": line,
             }
