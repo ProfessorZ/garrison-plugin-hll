@@ -13,7 +13,7 @@ def get_commands():
             params=[
                 CommandParam(name="Name", type="enum", required=True,
                              description="Info type to query",
-                             enum_values=["session", "players", "player", "maprotation",
+                             choices=["session", "players", "player", "maprotation",
                                          "mapsequence", "vipplayers", "bannedwords"]),
                 CommandParam(name="Value", type="string", required=False,
                              description="Optional filter value (e.g. player_id for player lookup)"),
@@ -343,7 +343,7 @@ def get_commands():
                              description="Player Steam ID"),
                 CommandParam(name="ForceMode", type="enum", required=True,
                              description="0=on next death, 1=immediately",
-                             enum_values=["0", "1"]),
+                             choices=["0", "1"]),
             ],
             example='ForceTeamSwitch {"PlayerId":"76561198012345678","ForceMode":1}',
         ),
