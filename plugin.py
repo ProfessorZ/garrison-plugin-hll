@@ -200,24 +200,9 @@ class HLLPlugin(GamePlugin):
             if "matchTime" in session:
                 extra["match_time"] = session["matchTime"]
 
-            # Try to get player slots
-            current, maximum = 0, 0
-            try:
-                slots_raw = await send_command(
-                    "GetServerInformation", {"Name": "slots", "Value": ""}
-                )
-                try:
-                    slots_data = json.loads(slots_raw) if isinstance(slots_raw, str) else slots_raw
-                    if isinstance(slots_data, dict):
-                        current = int(slots_data.get("current", 0))
-                        maximum = int(slots_data.get("max", 0))
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    if isinstance(slots_raw, str) and "/" in slots_raw:
-                        parts = slots_raw.split("/", 1)
-                        current = int(parts[0].strip())
-                        maximum = int(parts[1].strip())
-            except Exception:
-                pass
+            # Use playerCount from session data (slots endpoint returns empty)
+            current = int(session.get("playerCount", 0))
+            maximum = int(session.get("maxPlayers", 0))
 
             extra["max_players"] = maximum
 
@@ -378,11 +363,15 @@ class HLLPlugin(GamePlugin):
         now = datetime.now(timezone.utc)
         events = []
 
-        # Handle JSON array or newline-separated log lines
+        # Handle GetAdminLog response: {"entries": [{"timestamp": "...", "message": "..."}]}
+        # or JSON array or newline-separated log lines
         lines: list[str] = []
         try:
             parsed = json.loads(raw) if isinstance(raw, str) else raw
-            if isinstance(parsed, list):
+            if isinstance(parsed, dict) and "entries" in parsed:
+                # GetAdminLog format: extract message strings
+                lines = [e.get("message", "") for e in parsed["entries"] if e.get("message")]
+            elif isinstance(parsed, list):
                 lines = [str(entry) for entry in parsed]
             elif isinstance(parsed, str):
                 lines = parsed.splitlines()
