@@ -191,7 +191,9 @@ class HLLPlugin(GamePlugin):
             extra: dict = {}
             if session.get("serverName"):
                 extra["server_name"] = session["serverName"]
-            if session.get("mapName"):
+            if session.get("mapId"):
+                extra["map"] = session["mapId"]  # use mapId (e.g. "carentan_warfare") not mapName
+            elif session.get("mapName"):
                 extra["map"] = session["mapName"]
             if session.get("gameMode"):
                 extra["game_mode"] = session["gameMode"]
