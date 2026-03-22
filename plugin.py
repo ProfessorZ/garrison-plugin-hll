@@ -359,10 +359,15 @@ class HLLPlugin(GamePlugin):
 
     async def poll_events(self, send_command, since: str | None = None) -> list[dict]:
         """Poll HLL server for recent log events via GetAdminLog."""
-        # GetAdminLog returns the last N seconds of server log entries
-        # We request the last 120 seconds; deduplication happens upstream
+        import asyncio as _asyncio
         try:
-            raw = await send_command("GetAdminLog", {"LogBackTrackTime": 120})
+            raw = await _asyncio.wait_for(
+                send_command("GetAdminLog", {"LogBackTrackTime": 65}),
+                timeout=15.0,
+            )
+        except _asyncio.TimeoutError:
+            logger.warning("GetAdminLog timed out after 15s")
+            return []
         except Exception as e:
             logger.warning("Failed to get HLL logs: %s", e)
             return []
