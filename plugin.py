@@ -138,11 +138,28 @@ class HLLPlugin(GamePlugin):
         """Send an HLL RCON command and return the response contentBody."""
         if not self._connection or not self._connection.connected:
             return "ERROR: Not connected"
-        # When called from the console with a single string like "Kick name reason",
-        # split the first word as the command name.
+        # When called from the console with a single string like "GetAdminLog {...}",
+        # split the first word as the command name and try to parse the rest as JSON.
         if isinstance(content, str) and not content and " " in command:
-            command, content = command.split(" ", 1)
-        return await self._connection.send(command, content)
+            command, rest = command.split(" ", 1)
+            try:
+                import json as _json
+                content = _json.loads(rest)
+            except Exception:
+                content = rest
+        # If content is still a string, try parsing as JSON dict
+        if isinstance(content, str) and content.startswith("{"):
+            try:
+                import json as _json
+                content = _json.loads(content)
+            except Exception:
+                pass
+        result = await self._connection.send(command, content)
+        # Pretty-print JSON responses
+        if isinstance(result, (dict, list)):
+            import json as _json
+            return _json.dumps(result, indent=2)
+        return str(result) if result is not None else ""
 
     # ── GamePlugin interface ───────────────────────────────────────
 
