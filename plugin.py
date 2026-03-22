@@ -363,14 +363,16 @@ class HLLPlugin(GamePlugin):
         return None
 
     async def poll_events(self, send_command, since: str | None = None) -> list[dict]:
-        """Poll HLL server for recent log events via GetStructuredLogs."""
+        """Poll HLL server for recent log events via GetAdminLog."""
+        # GetAdminLog returns the last N seconds of server log entries
+        # We request the last 120 seconds; deduplication happens upstream
         try:
-            raw = await send_command("GetStructuredLogs", "")
+            raw = await send_command("GetAdminLog", {"LogBackTrackTime": 120})
         except Exception as e:
             logger.warning("Failed to get HLL logs: %s", e)
             return []
 
-        if not raw or raw.startswith("Error"):
+        if not raw or (isinstance(raw, str) and raw.startswith("Error")):
             return []
 
         now = datetime.now(timezone.utc)
