@@ -269,7 +269,15 @@ class HLLPlugin(GamePlugin):
     _RE_KICK = re.compile(r"^KICK: \[(.+?)\] (?:has been kicked\.?\s*)?(?:\[(.+)\])?$")
     _RE_BAN = re.compile(r"^BAN: \[(.+?)\].*$")
 
+    # Regex to strip the time prefix from GetAdminLog messages:
+    # "[3:01 min (1774199517)] CHAT[Team]..." -> "CHAT[Team]..."
+    _RE_LOG_PREFIX = re.compile(r"^\[\d+:\d{2} min \(\d+\)\] ")
+
     def _parse_log_line(self, line: str, now: datetime) -> dict | None:
+        # Strip the time prefix added by GetAdminLog
+        line = self._RE_LOG_PREFIX.sub("", line).strip()
+        if not line:
+            return None
         """Parse a single HLL log line into an event dict."""
         line = line.strip()
         if not line:
