@@ -290,7 +290,7 @@ class HLLPlugin(GamePlugin):
 
     # Regex to strip the time prefix from GetAdminLog messages:
     # "[3:01 min (1774199517)] CHAT[Team]..." -> "CHAT[Team]..."
-    _RE_LOG_PREFIX = re.compile(r"^\[\d+:\d{2} min \(\d+\)\] ")
+    _RE_LOG_PREFIX = re.compile(r"^\[(?:\d+:\d{2} min|\d+(?:\.\d+)? sec) \(\d+\)\] ")
 
     def _parse_log_line(self, line: str, now: datetime) -> dict | None:
         # Strip the time prefix added by GetAdminLog
