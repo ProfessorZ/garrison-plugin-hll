@@ -428,3 +428,63 @@ class HLLPlugin(GamePlugin):
                 events.append(event)
 
         return events
+
+    async def get_player_roles(self) -> list[str]:
+        """Return HLL admin groups as available roles."""
+        try:
+            raw = await self._connection.send("GetAdminGroups", {})
+            import json as _json
+            data = _json.loads(raw)
+            groups = data.get("adminGroups", [])
+            if isinstance(groups, list) and groups:
+                return [g.get("name", g) if isinstance(g, dict) else str(g) for g in groups]
+        except Exception:
+            pass
+        # Fallback common HLL groups
+        return ["Moderator", "Gamemaster", "Senior", "Spectator"]
+
+    async def promote_player(self, send_command, player: str, role: str) -> str:
+        """Grant HLL admin role using player's Steam ID or name."""
+        # player may be a Steam ID or name — HLL AddAdmin needs PlayerId (Steam64)
+        # Try direct as Steam ID first; if it's a name, look up in current player list
+        import re as _re
+        player_id = player if _re.match(r"^\d{17}$", player) else None
+        if not player_id:
+            try:
+                raw = await send_command("GetServerInformation", {"Name": "players", "Value": ""})
+                import json as _json
+                data = _json.loads(raw)
+                for p in data.get("players", []):
+                    if p.get("name", "").lower() == player.lower():
+                        player_id = p.get("id") or p.get("playerId")
+                        break
+            except Exception:
+                pass
+        if not player_id:
+            return f"ERROR: Could not resolve Steam ID for {player}"
+        result = await send_command("AddAdmin", {
+            "PlayerId": player_id,
+            "AdminGroup": role,
+            "Comment": f"Promoted via Garrison",
+        })
+        return result or "OK"
+
+    async def demote_player(self, send_command, player: str) -> str:
+        """Remove HLL admin role from player."""
+        import re as _re
+        player_id = player if _re.match(r"^\d{17}$", player) else None
+        if not player_id:
+            try:
+                raw = await send_command("GetServerInformation", {"Name": "players", "Value": ""})
+                import json as _json
+                data = _json.loads(raw)
+                for p in data.get("players", []):
+                    if p.get("name", "").lower() == player.lower():
+                        player_id = p.get("id") or p.get("playerId")
+                        break
+            except Exception:
+                pass
+        if not player_id:
+            return f"ERROR: Could not resolve Steam ID for {player}"
+        result = await send_command("RemoveAdmin", {"PlayerId": player_id})
+        return result or "OK"
